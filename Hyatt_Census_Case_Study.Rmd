@@ -1,0 +1,1053 @@
+---
+title: "Hyatt Census Case Study"
+author: "Drew Wilimitis"
+date: "October 16th, 2018"
+output:
+  pdf_document: 
+    fig_crop: no
+  html_document:
+    df_print: kable
+  word_document: default
+geometry: margin=0.75in
+header-includes: \usepackage{pdfpages}
+fontsize: 14pt
+fig_crop: no
+---
+
+## Scenario
+#### Hyatt's marketing team is working on an email campaign and wants to be able to target customers based on their income. The training data consists of demographic data as well as income levels for those individuals. For new customers in the test set, predict the income level for each customer.
+ 
+
+# **Initial Setup**
+  
+  
+   
+We start by loading the required libraries and initializing the RMarkdown default settings  
+  
+  
+   
+  
+```{r setup, echo = TRUE, warning = FALSE, message = FALSE}
+# Importing libraries 
+library(MASS)
+library(GGally)
+library(openintro)
+library(mosaic)
+library(knitr)
+library(tidyverse)
+library(ggformula)
+library(gridExtra)
+library(broom)
+library(readr)
+library(lubridate)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(xtable)
+library(readxl)
+
+# RMarkdown settings
+options(width=70, digits=4, scipen=8)
+ 
+# Set the default for displaying code and warnings
+opts_chunk$set(echo = TRUE)
+opts_chunk$set(message = FALSE)
+opts_chunk$set(warning = FALSE)
+```
+ 
+
+ 
+ 
+   
+ 
+Next we read in the Census Data
+  
+
+  
+  
+```{r, results = 'hide'}
+# Clear the workspace
+rm(list = ls())
+gc()
+
+# Loading data
+train_data <- read_excel("C:/Users/Drew/Desktop/Hyatt/censusTrain.xlsx")
+test_data <- read_excel("C:/Users/Drew/Desktop/Hyatt/censusTest.xlsx")
+
+# Convert to data frame
+train_data <- as.data.frame(train_data)
+test_data <- as.data.frame(test_data)
+
+```
+
+
+ 
+ 
+ 
+# **Exploratory Analysis and Data Prep**
+  
+  
+  
+
+  
+```{r}
+# View first few rows
+head(train_data)
+```
+  
+  
+    
+    
+```{r}
+# View structure and data types
+str(train_data)
+```
+  
+  
+\pagebreak   
+      
+  
+## **Data Quality**  
+  
+  
+### Check for NA values, duplicates, and delete unnecessary columns  
+  
+  
+    
+### We remove NA values in the training data to maintain an accurate prediction model
+  
+  
+    
+### We impute for NA values in the test data so that we can provide predictions for every test observation
+  
+      
+      
+```{r, results = 'hide'}
+# Check for duplicates
+anyDuplicated(train_data)
+anyDuplicated(test_data)
+
+# Drop unnecessary 'id' column
+train_data <- train_data[, 2:16]
+test_data <- test_data[, 2:15]
+
+```
+  
+  
+```{r}
+# Check for NA values
+colnames(train_data)[colSums(is.na(train_data)) > 0]
+colnames(test_data)[colSums(is.na(test_data)) > 0]
+
+# remove NA values for training data
+train_data <- na.omit(train_data)
+```
+  
+  
+
+  
+  
+## **Understanding Input and Target Variables**     
+  
+  
+  
+### 14 predictor variables and 1 response variable
+  
+  
+#### predictor variables
+  
+  
+1. **age** - Age of individual in years
+2. **work_class** - Individual's working class (State-gov, Federal-gov, Private, etc.)
+3. **fnlwgt** - Final sampling weight, corrects for under/over representation in sample 
+4. **education** - Education level as character (HS-grad, Bachelors, Masters, Doctorate, etc.)
+5. **education_num** - Numerical value for number of education years
+6. **marital_status** - Character such as Never-married, Divorced, Widowed, etc.
+7. **occupation** - Character such as Sales, Tech-support, Exec-managerial, etc.
+8. **relationship** - Relationship status (Husband, Wife, Unmarried, Own-child)
+9. **race** - Race (White, Black, Asian-Pac-Islander, Amer-Indian-Eskimo, other)
+10. **sex** - Male or Female
+11. **capital_gain** - Capital gains as pos. number (profit from sale of property or investment)
+12. **capital_loss** - Capital losses as pos. number (loss from sale of property or investment)
+13. **hours_per_week** - Number of hours worked per week, numerical
+14. **native_country** - Native country of individual (United-States, Mexico, China, etc.)
+  
+   
+#### target/response variable
+
+1. **income** - Annual income level as a character, either "<=50k" or '>50k'
+  
+  
+#### Two income classes as the target variable -> Binary Classification
+  
+\pagebreak                                                                                                           
+
+
+
+
+### **Response Variable** - Income
+  
+  
+Summary of income level proportions  
+  
+  
+  
+  
+```{r}
+prop.table(table(train_data$income))
+```
+  
+  
+This shows that the % of people earning less than 50K is 75.1% and the % of people earning more than 50k is 24.9%    
+  
+  
+For this binary classification there is an imbalance between the two classes
+  
+  
+  
+## **age variable**
+    
+  
+Age summary statistics
+  
+  
+```{r}
+summary(train_data$age)
+```
+  
+This shows around 50% of the people are between age 28 and 47 years old.  
+
+Visualizing the distribution of age  
+
+    
+```{r, fig.height= 4}
+# histogram of ages
+qplot(x = age, 
+      data = train_data, 
+      binwidth = 5, 
+      color = I('black'), 
+      fill = I('blue'),
+      xlab = "Age",
+      ylab = "Count",
+      main = "Histogram of Age") + 
+      scale_x_continuous(breaks = seq(0, 100, 5)) + scale_y_continuous(breaks = seq(0, 5000, 500))
+```
+  
+  
+  
+The histogram also shows that the most common ages are in groups between 25 - 45 years old
+  
+  
+  
+Now we explore the correlation between age and income level
+  
+  
+
+```{r, fig.height = 4}
+# conditional density plot of income vs. age
+cdplot(x = train_data$age,
+       y = as.factor(train_data$income),
+       col = c('light blue', 'gray'),
+       border = 1,
+       xlab = "Age",
+       ylab = "Income",
+       main = "Conditionl Density Plot of Income versus Age")
+
+```
+  
+  
+  
+The conditional density plot shows that very young and very old age groups have the highest proportion of lower income, while the age group from 40-60 has the highest proportion of people with higher income.
+  
+  
+  
+This suggests a correlation where as age increases income tends to increase.  
+  
+  
+  
+## **work_class variable**  
+  
+Summary statistics
+  
+  
+  
+```{r}
+# proportion of total people in each working class
+kable(sort(prop.table(table(train_data$work_class)), decreasing = T), 
+      col.names = c('work_class', '% of total'))
+```
+
+
+  
+  
+We find proportion of people within each working class with income > 50K  
+  
+  
+  
+
+```{r}
+# temp df as copy of train_data, use indicator variables for easier computations for now
+# after transforming features on temp df, check the accuracy against original training data
+tmp <- train_data %>%
+  mutate(income_ind = ifelse(income == "<=50K", 0, 1))
+
+# percent high income by working class
+work_class_income <- tmp %>%
+  group_by(work_class) %>%
+  mutate(pct_high_income = mean(income_ind),
+         count = n()) %>%
+  select(work_class, count, pct_high_income) %>%
+  distinct()
+
+kable(arrange(work_class_income, desc(pct_high_income)))
+
+```
+  
+  
+  
+  
+Now we create groups for the work_class feature to prep for analysis
+  
+  
+    
+  
+```{r}
+# creating groups for work_class
+self_employed <- c('Self-emp-inc', 'Self-emp-not-inc')
+gov <- c('Federal-gov', 'Local-gov', 'State-gov')
+
+# transform data frames
+tmp$work_class <- ifelse(tmp$work_class %in% self_employed, 'self',
+                  ifelse(tmp$work_class %in% gov, 'gov', 'private'))
+
+```
+  
+```{r}
+# note we impute NA values in test data as 'private'
+test_data$work_class <- ifelse(test_data$work_class %in% self_employed, 'self',                                                         ifelse(test_data$work_class %in% gov, 'gov', 'private'))
+```
+  
+
+## **education** and **education_num**
+  
+  
+  
+It is reasonable to assume that these variables are correlated, and so we will create a few
+education level groups to use in our model
+  
+  
+
+Summary Statistics
+  
+  
+  
+```{r}
+summary(train_data$education_num)
+kable(sort(prop.table(table(train_data$education)), 
+           decreasing = TRUE),
+           col.names = c('education', '% of total'))
+```
+    
+  
+  
+Now we create five education levels
+  
+
+  
+  
+```{r}
+no_HS <- c('10th', '11th', '12th', '1st-4th', '5th-6th', '7th-8th', '9th')
+  
+HS_grad <- c('HS-grad')
+  
+assoc <- c('Assoc-acdm', 'Assoc-voc', 'Prof-school', 'Some-college')
+  
+college_grad <- c('Bachelors')
+  
+grad_school <- c('Masters', 'Doctorate')
+
+
+tmp$education <- ifelse(tmp$education %in% grad_school, 'grad_school',
+                 ifelse(tmp$education %in% college_grad, 'college_grad',
+                 ifelse(tmp$education %in% assoc, 'assoc',
+                 ifelse(tmp$education %in% HS_grad, 'hs_grad', 'no_hs'))))
+
+test_data$education <- ifelse(test_data$education %in% grad_school, 'grad_school',
+                       ifelse(test_data$education %in% college_grad, 'college_grad',
+                       ifelse(test_data$education %in% assoc, 'assoc',
+                       ifelse(test_data$education %in% HS_grad, 'hs_grad', 'no_hs'))))
+
+prop.table(table(tmp$education, tmp$income), margin = 1)
+  
+```
+
+
+
+
+
+
+## **fnlwgt**
+  
+  
+  
+We drop this feature as it is not relevant to this particular prediction model
+
+
+  
+  
+## **marital_status** and **relationship**
+  
+  
+  
+It is also reasonable to believe that marital_status is highly correlated with relationship status,
+and gender would almost completely determine relationship status as 'Husband', 'Wife', etc.
+  
+  
+Before considering the utility of including these features in the model, we examine the distribution of the data  
+  
+
+```{r}
+# marital status summary
+kable(sort(prop.table(table(tmp$marital_status)), decreasing = TRUE), 
+      col.names = c('marital_status', '% of total'))
+
+prop.table(table(tmp$marital_status, tmp$income), margin = 1)
+
+```
+  
+  
+  
+    
+```{r}
+# relationship status summary
+kable(sort(prop.table(table(tmp$relationship)), decreasing = TRUE),
+           col.names = c('relationship', '% of total'))
+prop.table(table(tmp$relationship, tmp$income), margin = 1)
+```
+
+  
+  
+  
+After examining the relationship between marital status, relationship, and income, we transform the marital status feature to show groups for 'Married' and 'Single'
+
+We drop the relationship feature from our dataset
+  
+  
+  
+
+```{r}
+married <- c('Married-civ-spouse', 'Married-AF-spouse')
+not_married <- c('Divorced', 'Separated', 'Widowed', 'Never-Married', 'Married-spouse-absent')
+
+tmp$marital_status <- ifelse(tmp$marital_status %in% married, 'married', 'not_married')
+
+test_data$marital_status <- ifelse(test_data$marital_status %in% married, 'married', 
+                                   'not_married')
+```
+
+
+  
+
+
+## **occupation**
+  
+  
+As before, we investigate summary statistics and relation with income variable  
+  
+  
+```{r}
+# top 5 occupations
+kable(sort(prop.table(table(train_data$occupation)), decreasing = T),
+      col.names = c('occupation', '% of total'))
+```
+    
+  
+  
+```{r}
+# find proportion of high income level within each occupation
+job_incomes <- tmp %>%
+  group_by(occupation) %>%
+  mutate(pct_high_income = mean(income_ind),
+         count = n()) %>%
+  select(occupation, count, pct_high_income) %>%
+  distinct()
+
+kable(arrange(job_incomes, desc(pct_high_income)))
+```
+  
+    
+    
+  
+The table above shows a significant disparity in proportional income level
+  
+
+  
+Now we create groups based on occupations with similar percentage of high income individuals
+    
+    
+  
+```{r}
+upper_class_job <- c('Exec-managerial', 
+                     'Prof-specialty', 
+                     'Protective-serv', 
+                     'Tech-support', 
+                     'Sales')
+
+middle_class_job <- c('Craft-repair', 
+                      'Transport-moving', 
+                      'Adm-clerical')
+
+low_class_job <- c('Handlers-cleaners', 
+                   'Other-service', 
+                   'Priv-house-serv', 
+                   'Armed-Forces',
+                   'Farming-fishing', 
+                   'Machine-op-inspct')
+
+tmp$occupation <- ifelse(tmp$occupation %in% upper_class_job, 'upper_class',
+                  ifelse(tmp$occupation %in% middle_class_job, 'middle_class', 'lower_class'))
+
+# note we impute NA values in test data as 'middle_class' - the most frequent class
+test_data$occupation <- ifelse(test_data$occupation %in% upper_class_job, 'upper_class',
+                        ifelse(test_data$occupation %in% low_class_job, 
+                               'lower_class', 
+                               'middle_class'))
+```
+  
+
+
+
+
+
+
+## **race**
+
+  
+  
+  
+Distribution of race in the same and race vs. income
+  
+  
+  
+  
+```{r}
+# percent of each racial group
+kable(sort(prop.table(table(train_data$race)), decreasing = T),
+      col.names = c('race', '% of total'))
+
+```
+  
+  
+  
+```{r}
+# differences in income proportions by race
+prop.table(table(train_data$race, train_data$income), margin = 1)
+```
+  
+  
+  
+  
+Since we have low counts for the minority groups, we separate the race feature into White and Non-White groups
+  
+  
+    
+  
+```{r}
+tmp$race <- ifelse(tmp$race == 'White', 'white', 'non_white')
+test_data$race <- ifelse(test_data$race == 'White', 'white', 'non_white')
+
+prop.table(table(tmp$race, tmp$income), margin = 1)
+
+```
+
+
+  
+Among Non-Whites 15.8% have income >50k, and among Whites 26.4% have income >50k  
+  
+  
+
+## **sex**
+
+  
+  
+We find the proportion of male and female individuals in the data
+  
+    
+  
+  
+```{r}
+sort(prop.table(table(train_data$sex)), decreasing = T)
+```
+  
+  
+  
+Then we show the relationship between gender and income class
+  
+  
+  
+```{r}
+# proportion of income class for each gender
+prop.table(table(train_data$sex, train_data$income), margin = 1)
+```
+  
+  
+11% of Females have income >50k while 31.4% of Males have income >50k  
+  
+  
+Significant difference in income level proportion for males vs. females, but the correlation between gender and other features needs to be investigated
+  
+
+
+  
+  
+## **capital_gain** and **capital_loss**
+  
+  
+  
+The relationship with capital_gains and income level is much less intuitive than some of the other features like education level, age, occupation, etc.  
+
+  
+I would guess that individuals with any capital loss or capital gain would be higher income, as they have the wealth to own investments or other assets  
+
+  
+We will look at the distribution of capital_gains and capital_losses and consider different ways to engineer an explanatory feature
+  
+  
+  
+```{r}
+# summary statistics
+summary(train_data$capital_gain)
+summary(train_data$capital_loss)
+
+```
+  
+  
+  
+  
+```{r}
+# new column indicating 1 if capital_gain or capital_loss is non-zero, 0 otherwise
+non_zero_gain <- tmp$capital_gain != 0
+non_zero_loss <- tmp$capital_loss != 0
+
+non_zero_gain_test <- test_data$capital_gain != 0
+non_zero_loss_test <- test_data$capital_loss != 0
+
+tmp$non_zero_cap <- as.numeric(non_zero_gain | non_zero_loss)
+test_data$non_zero_cap <- as.numeric(non_zero_gain_test | non_zero_loss_test)
+
+# new column as capital gain - capital loss
+tmp <- tmp %>%
+  mutate(capital_profit = ifelse(capital_gain - capital_loss > 0, 'positive',
+                          ifelse(capital_gain - capital_loss < 0, 'negative', 'zero')))
+
+# percent with positive/negative/zero profit
+prop.table(table(tmp$capital_profit))
+  
+# counts with positive/negative/zero profit
+table(as.factor(tmp$capital_profit))
+
+# income level based on positive or negative capital profit
+prop.table(table(tmp$capital_profit, tmp$income), margin = 1)
+
+```
+  
+  
+```{r}
+# percent with some nonzero capital gain or loss
+prop.table(table(tmp$non_zero_cap))
+
+# proportion of income levels among individuals with nonzero capital gain or loss
+prop.table(table(tmp$non_zero_cap, tmp$income), margin = 1)
+```
+  
+  
+
+58% of individuals with nonzero capital gain or nonzero capital loss have income >50K
+19% of individuals with 0 capital gain and 0 capital loss have income >50K
+
+Therefore, we only use the new feature non_zero_cap as an indicator variable where the value is 1 for nonzero capital gain or loss and 0 otherwise
+  
+  
+
+## **hours_per_week**
+  
+  
+Distribution of hours worked per week
+  
+  
+  
+  
+```{r}
+summary(train_data$hours_per_week)
+kable(sort((prop.table(table(train_data$hours_per_week))), decreasing = T)[1:5],
+      col.names = c('hours_per_week', '% of total'))
+
+```
+  
+  
+  
+  
+Based on the 1st and 3rd quartile, around 50% of individuals work between 40 and 45 hours per week.
+  
+  
+  
+  
+Visualizing hours worked per week  
+  
+  
+  
+  
+```{r}
+# histogram of hours worked per week
+qplot(x = hours_per_week, 
+      data = train_data, 
+      binwidth = 10, 
+      color = I('black'), 
+      fill = I('green'),
+      xlab = "Hours worked per week",
+      ylab = "Count",
+      main = "Histogram of Hours Worked per Week") +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +   
+  scale_y_continuous(breaks = seq(0, 15000, 3000))
+```
+  
+  
+  
+I would hypothesize that the percentage of high income earners is greater among those who work more hours, so we group the observations to investigate the correlation with income
+  
+  
+  
+```{r}
+# creating four levels for number of hours worked per week
+tmp <- tmp %>%
+  mutate(hours_worked = ifelse(hours_per_week < 40, '0-39',
+                        ifelse(hours_per_week >= 40 & hours_per_week <= 45, '40-45',
+                        ifelse(hours_per_week > 45 & hours_per_week <= 60, '46-60', '60+'))))
+
+test_data <- test_data %>%
+  mutate(hours_worked = ifelse(hours_per_week < 40, '0-39',
+                        ifelse(hours_per_week >= 40 & hours_per_week <= 45, '40-45',
+                        ifelse(hours_per_week > 45 & hours_per_week <= 60, '46-60', '60+'))))
+
+# hours worked vs. income
+kable(sort(prop.table(table(tmp$hours_worked)), decreasing = TRUE),
+           col.names = c('hours_worked', '% of total')) 
+prop.table(table(tmp$hours_worked, tmp$income), margin = 1)
+```
+  
+  
+  
+Barplot of hours worked vs. income
+  
+  
+  
+```{r}
+hours_vs_income <- tmp %>%
+  group_by(hours_worked) %>%
+  mutate(prop_high_income = mean(income_ind)) %>%
+  select(hours_worked, prop_high_income) %>%
+  distinct()
+
+hour_plot <- ggplot(data = hours_vs_income, 
+                    aes(x = hours_worked, y = prop_high_income)) +
+                    geom_bar(stat ="identity", fill = "steelblue") +
+                    geom_text(aes(label = round(prop_high_income, 2)),
+                              vjust=1.6, color="white", size=3.5) +
+                    labs(title="Income vs. Hours worked per week", 
+                         x="Hours worked", 
+                         y = "Proportion of high income" ) +
+                    theme_minimal()
+
+hour_plot
+```
+
+  
+
+
+
+
+
+## **native_country**
+  
+  
+  
+There are 42 unique countries listed, with 91% as United States.  
+
+
+Here we also have many different ways to potentially prepare and segment the data.  
+
+    
+  
+```{r}
+# top 5 countries represented in the sample
+kable((sort(prop.table(table(train_data$native_country)), decreasing = T))[1:5],
+      col.names = c('native_country', '% of total'))
+
+```
+
+  
+  
+  
+We consider different ways to group countries together: by region, by national wealth, etc.
+  
+  
+  
+
+```{r}
+# Percent high income grouped by country
+country_incomes <- tmp %>%
+  group_by(native_country) %>%
+  mutate(avg_country_income = mean(income_ind),
+         count = n()) %>%
+  select(native_country, count, avg_country_income) %>%
+  distinct()
+
+kable(arrange(country_incomes, desc(avg_country_income)))
+
+```
+  
+  
+  
+  
+```{r}
+# South/Central America vs. Non-South American
+# 1335, or only around 4% of total are in this group
+south_america <- c('Dominican-Republic', 
+                   "Peru", 
+                   "Columbia", 
+                   "Ecuador", 
+                   "Guatemala", 
+                   "Nicaragua",
+                   "Outlying-US(Guam-USVI-etc)", 
+                   "Mexico", 
+                   "Honduras", 
+                   "El-Salvador", 
+                   "Haiti",
+                   "Puerto-Rico", 
+                   "Jamaica", 
+                   "Cuba")
+
+# Developed vs. Non-developed countries
+dev_countries <- c('United-States', 
+                   'England', 
+                   'Germany', 
+                   'France', 
+                   'Italy', 
+                   'Canada',
+                   'China', 
+                   'Japan', 
+                   'India', 
+                   'Taiwan', 
+                   'Philippines')
+
+# 1785 are in non_developed with 11.5% high income
+# 28377 are in developed with 25.7% high income
+dev_income <- mean(tmp[tmp$native_country %in% dev_countries, ]$income_ind) 
+non_dev_income <- mean(tmp[!tmp$native_country %in% dev_countries, ]$income_ind)
+
+```
+  
+
+  
+  
+Therefore, we transform the native country feature to an indicator representing whether the country is among the developed countries or not
+  
+  
+  
+```{r}
+# transforming native_country column
+tmp$native_country <- ifelse(tmp$native_country %in% dev_countries, 
+                             'developed', 'under_developed')
+
+# imputing NA values with most frequent value
+test_data[is.na(test_data$native_country), ]$native_country <- 'United-States'
+test_data$native_country <- ifelse(test_data$native_country %in% dev_countries, 
+                                   'developed', 'under_developed')
+
+# proportion of high income by country
+prop.table(table(tmp$native_country, tmp$income), margin = 1)
+                    
+```
+
+  
+  
+  
+Now we can drop unnecessary columns and finalize our processed data
+  
+  
+  
+```{r}
+# Deleting unnecessary columns
+tmp <- tmp[ , !names(tmp) %in% c('id',
+                                 'fnlwgt', 
+                                 'education_num', 
+                                 'relationship', 
+                                 'capital_gain',
+                                 'capital_loss', 
+                                 'hours_per_week', 
+                                 'capital_profit', 
+                                 'income')]
+
+test_data <- test_data[ , !names(test_data) %in% c('id',
+                                                   'fnlwgt', 
+                                                   'education_num', 
+                                                   'relationship',
+                                                   'capital_gain', 
+                                                   'capital_loss', 
+                                                   'hours_per_week', 
+                                                   'capital_profit', 
+                                                   'income')]
+valid_data <- test_data
+census_validation$income <- ifelse(census_validation$income == '<=50K.', 0, 1)
+valid_data$income <- census_validation$income
+
+```
+
+
+```{r}
+# Examine our processed training data
+train_data <- tmp
+head(train_data)
+str(train_data)
+
+```
+
+
+  
+  
+# **Logistic Regression Model**
+  
+  
+#### Since this prediction problem is a binary classification, we will use logistic regression.  
+  
+  
+#### We fit the logistic model to our training data to calculate values of the coefficients for our predictor variables, which defines the model and allows us to make predictions on new data  
+  
+  
+#### We can then use the predict function, which will give probabilities between 0 and 1. We have to set the decision threshhold and classify probabilities greater than the cutoff as 1 (income > 50k) and probabilities less than the cutoff as 0 (income <= 50k)  
+  
+  
+#### With methods like forward/back selection, p-values, and AIC we attempt to optimize our model
+  
+  
+  
+  
+```{r}
+# Logistic Regression model
+
+# consider models with fewer features vs. the full model
+mylogit1 <- glm(income_ind ~ age + education + occupation + marital_status,
+               data = train_data, family = "binomial")
+
+summary(mylogit1)
+
+mylogit2 <- glm(income_ind ~ age + education + occupation + marital_status + hours_worked,
+               data = train_data, family = "binomial")
+
+summary(mylogit2)  
+
+```
+  
+  
+```{r}
+mylogit_full <- glm(income_ind ~ ., data = train_data, family = "binomial")
+drop1(mylogit_full,test="Chisq")
+```
+  
+  
+This output shows that the Deviance is lowest under the full model, and the AIC is the lowest under the full model, and this implies that the full model minimizes the estimated loss of information and provides a better fit compared to the other potential models 
+  
+  
+All the input variables have small p-values < 0.05, and even though the p-value for the race coefficient is 0.098 we leave it in the model for now as the tolerated p-values are slightly higher for this test than typical hypothesis tests
+  
+  
+Next we view the weights given to the coefficients  
+  
+    
+
+```{r}
+# view model summary
+tidy(mylogit_full)
+```
+
+  
+  
+Since this is a logistic regression model, this is easier to interpret by outputing the odds ratios
+  
+
+  
+  
+```{r}
+# Odds ratios
+tidy(exp(coef(mylogit_full)))
+```
+  
+  
+  
+This suggests that having capital gains or losses significantly increases the odds of an individual being in the high income class by around 4x the odds for an individual without any capital gains or losses.  
+  
+If an individual is in an upper class occupation vs. a lower class occupation, the odds of being in the higher income class is about 3.75x higher.
+  
+  
+  
+Now we use this model to predict the income classes for new observations in the testing or validation dataset
+  
+  
+  
+```{r}
+# Predictions
+
+# we set the prediction cutoff probability at 0.35 
+# since there is a class imbalance, this should give 
+# better accuracy predicting incomes that are greater than 50k
+
+# create new column with predicted income values
+test_data$pred_income <- 0
+
+# create copy of test data to experiment with different probability cutoffs
+new_data <- test_data
+new_data$pred_income <- predict(mylogit_full, newdata = new_data, type = "response")
+new_data$pred_income <- ifelse(new_data$pred_income < 0.35, '<=50K', '>50K')
+
+
+# read in censusTest file
+censusTest <- read_excel("C:/Users/Drew/Desktop/Hyatt/censusTest.xlsx")
+censusTest <- as.data.frame(censusTest[, 2:15])
+
+# add income level predictions
+censusTest$income <- new_data$pred_income
+
+# output file as csv
+write.csv(censusTest, file = "censusTest_Final.csv")
+
+```
+
+  
+
+  
+  
+# **Conclusion**
+  
+  
+  
+### Remarks, limitations, further analyses, and business applications
+  
+
+Given the time constraints and the difficulty in not being able to truly assess the accuracy of the model predictions on the test/validation dataset, I chose to use a logistic regression model.
+  
+  
+I am most familiar with logistic regression and I believe logistic regression would perform sufficiently well compared to other possible classification approaches (SVM, Random Forests, KNN, etc.). Logistic regression should be fairly well suited for the number of observations and the number of input variables, and won't be too computationally expensive.  
+  
+    
+This analysis could be extended by implementing alternative classifiers, engineering new features and further analyzing feature importance and correlation among the input variables, using other validation methods, and determining how the cutoff probability level can be tuned to give different accuracy levels
+
+  
+Finally, since the income class is unbalanced the overall accuracy could be improved by setting the probability cutoff value closer to 0.5. However, this would lead to less accurate predictions of high-income individuals, and for the purpose of a marketing campaign it seems that correctly predicting more higher income individuals would be preferrable
+
+
+
+
+
+
+
